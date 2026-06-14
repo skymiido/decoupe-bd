@@ -36,6 +36,21 @@
         }
         .btn:hover { background-color: #b4befe; }
         #status { margin: 15px 0; color: #a6e3a1; font-weight: bold; }
+        
+        /* Style de la zone de réglage */
+        .reglage-box {
+            background: #181825;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            border: 1px solid #45475a;
+        }
+        .slider {
+            width: 85%;
+            margin-top: 10px;
+            accent-color: #f5c2e7;
+        }
+
         #resultats {
             display: flex;
             flex-direction: column;
@@ -55,10 +70,16 @@
 <div class="container">
     <h1>✂️ Découpeur Auto Mobile</h1>
     
+    <div id="status">Chargement de l'intelligence de découpe... ⏳</div>
+
+    <div class="reglage-box">
+        <label for="seuilSlider" style="font-weight: bold; display: block;">🎛️ Seuil de Détection : <span id="seuilValeur" style="color: #f5c2e7;">220</span></label>
+        <input type="range" id="seuilSlider" class="slider" min="100" max="250" value="220">
+        <small style="display: block; color: #a6adc8; margin-top: 5px;">Baisse si des cases manquent. Augmente s'il y a de fausses cases.</small>
+    </div>
+    
     <label for="fileInput" class="btn">📱 Choisir une image de BD</label>
     <input type="file" id="fileInput" accept="image/*">
-    
-    <div id="status">Chargement de l'intelligence de découpe... ⏳</div>
     
     <div id="resultats"></div>
 </div>
@@ -67,12 +88,23 @@
 
 <script>
     let cvReady = false;
+    let imageChargee = null;
 
     // Quand OpenCV.js a fini de charger
     function onOpenCvReady() {
-        document.getElementById('status').innerText = "Prêt ! Glisse une image pour commencer. ✅";
+        document.getElementById('status').innerText = "Prêt ! Sélectionne une image pour commencer. ✅";
         cvReady = true;
     }
+
+    // Réagir en temps réel au changement du curseur
+    document.getElementById('seuilSlider').addEventListener('input', function(e) {
+        document.getElementById('seuilValeur').innerText = e.target.value;
+        if (imageChargee) {
+            document.getElementById('status').innerText = "Recalcul en cours... ⏳";
+            // Un micro-délai pour laisser le slider fluide sur téléphone
+            setTimeout(() => { traiterImage(imageChargee); }, 50);
+        }
+    });
 
     document.getElementById('fileInput').addEventListener('change', function(e) {
         if (!cvReady) {
@@ -84,71 +116,68 @@
         if (!file) return;
 
         document.getElementById('status').innerText = "Découpe en cours... ⏳";
-        document.getElementById('resultats').innerHTML = ""; // Vider les anciennes cases
 
         let reader = new FileReader();
         reader.onload = function(event) {
-            let img = new Image();
-            img.onload = function() {
-                traiterImage(img);
+            imageChargee = new Image();
+            imageChargee.onload = function() {
+                traiterImage(imageChargee);
             }
-            img.src = event.target.result;
+            imageChargee.src = event.target.result;
         }
         reader.readAsDataURL(file);
     });
 
     function traiterImage(imgBlanche) {
-        // 1. Dessiner l'image dans un canvas pour qu'OpenCV puisse la lire
         let canvas = document.getElementById('canvasIn');
         let ctx = canvas.getContext('2d');
         canvas.width = imgBlanche.width;
         canvas.height = imgBlanche.height;
         ctx.drawImage(imgBlanche, 0, 0);
 
-        // 2. Logique OpenCV (comme en Python !)
         let src = cv.imread(canvas);
-        let dst = new cv.Mat();
         let gray = new cv.Mat();
         let thresh = new cv.Mat();
         let contours = new cv.MatVector();
         let hierarchy = new cv.Mat();
 
-        // Convertir en gris, flouter et binariser
+        // Conversion en niveaux de gris et flou léger
         cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
         let ksize = new cv.Size(5, 5);
         cv.GaussianBlur(gray, gray, ksize, 0, 0, cv.BORDER_DEFAULT);
-        cv.threshold(gray, thresh, 230, 255, cv.THRESH_BINARY_INV);
 
-        // Trouver les contours
+        // Récupération de la valeur du curseur pour ajuster le contraste des lignes
+        let valeurSeuil = parseInt(document.getElementById('seuilSlider').value);
+        cv.threshold(gray, thresh, valeurSeuil, 255, cv.THRESH_BINARY_INV);
+
+        // Détection des contours
         cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
         let compteur = 0;
         let resultatsDiv = document.getElementById('resultats');
+        resultatsDiv.innerHTML = ""; // Vider l'écran
 
-        // On parcourt les contours à l'envers (du haut vers le bas de la page)
+        // Parcours du haut vers le bas
         for (let i = contours.size() - 1; i >= 0; --i) {
             let cnt = contours.get(i);
             let rect = cv.boundingRect(cnt);
 
-            // Filtrer les éléments trop petits (bulles, poussières)
-            if (rect.width > 150 && rect.height > 150) {
+            // Filtre de taille réduit à 80px pour capturer même les petites cases (mangas inclus)
+            if (rect.width > 80 && rect.height > 80) {
                 compteur++;
 
-                // Créer un mini canvas pour cette case spécifique
                 let canvasCase = document.createElement('canvas');
                 canvasCase.width = rect.width;
                 canvasCase.height = rect.height;
                 let ctxCase = canvasCase.getContext('2d');
 
-                // Découper la zone (crop) depuis le canvas d'origine
+                // Crop de la case
                 ctxCase.drawImage(canvas, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
 
-                // Convertir le canvas en image affichable et téléchargeable
                 let imgCase = new Image();
                 imgCase.src = canvasCase.toDataURL("image/png");
                 imgCase.className = "case-img";
 
-                // Ajouter un bouton pour la sauvegarder sur le téléphone
                 let conteneurCase = document.createElement('div');
                 conteneurCase.appendChild(imgCase);
                 
@@ -166,10 +195,10 @@
             }
         }
 
-        document.getElementById('status').innerText = `🎉 Terminé ! ${compteur} cases trouvées.`;
+        document.getElementById('status').innerText = `🎉 Terminé ! ${compteur} cases détectées.`;
 
-        // Nettoyage de la mémoire OpenCV
-        src.delete(); dst.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
+        // Nettoyage complet des données OpenCV en mémoire
+        src.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
     }
 </script>
 

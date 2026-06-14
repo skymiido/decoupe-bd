@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>✂️ Découpe Auto BD</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1e1e2e;
+            color: #cdd6f4;
+            text-align: center;
+            padding: 20px;
+            margin: 0;
+        }
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+            background: #252538;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+        }
+        h1 { color: #f5c2e7; margin-bottom: 25px; }
+        input[type="file"] { display: none; }
+        .btn {
+            display: inline-block;
+            background-color: #89b4fa;
+            color: #11111b;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            margin-bottom: 20px;
+            transition: 0.3s;
+        }
+        .btn:hover { background-color: #b4befe; }
+        #status { margin: 15px 0; color: #a6e3a1; font-weight: bold; }
+        #resultats {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            margin-top: 25px;
+        }
+        .case-img {
+            max-width: 100%;
+            border: 3px solid #f5c2e7;
+            border-radius: 8px;
+        }
+    </style>
+    <script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
+</head>
+<body>
+
+<div class="container">
+    <h1>✂️ Découpeur Auto Mobile</h1>
+    
+    <label for="fileInput" class="btn">📱 Choisir une image de BD</label>
+    <input type="file" id="fileInput" accept="image/*">
+    
+    <div id="status">Chargement de l'intelligence de découpe... ⏳</div>
+    
+    <div id="resultats"></div>
+</div>
+
+<canvas id="canvasIn" style="display:none;"></canvas>
+
+<script>
+    let cvReady = false;
+
+    // Quand OpenCV.js a fini de charger
+    function onOpenCvReady() {
+        document.getElementById('status').innerText = "Prêt ! Glisse une image pour commencer. ✅";
+        cvReady = true;
+    }
+
+    document.getElementById('fileInput').addEventListener('change', function(e) {
+        if (!cvReady) {
+            alert("L'application charge encore, attends une seconde !");
+            return;
+        }
+
+        let file = e.target.files[0];
+        if (!file) return;
+
+        document.getElementById('status').innerText = "Découpe en cours... ⏳";
+        document.getElementById('resultats').innerHTML = ""; // Vider les anciennes cases
+
+        let reader = new FileReader();
+        reader.onload = function(event) {
+            let img = new Image();
+            img.onload = function() {
+                traiterImage(img);
+            }
+            img.src = event.target.result;
+        }
+        reader.readAsDataURL(file);
+    });
+
+    function traiterImage(imgBlanche) {
+        // 1. Dessiner l'image dans un canvas pour qu'OpenCV puisse la lire
+        let canvas = document.getElementById('canvasIn');
+        let ctx = canvas.getContext('2d');
+        canvas.width = imgBlanche.width;
+        canvas.height = imgBlanche.height;
+        ctx.drawImage(imgBlanche, 0, 0);
+
+        // 2. Logique OpenCV (comme en Python !)
+        let src = cv.imread(canvas);
+        let dst = new cv.Mat();
+        let gray = new cv.Mat();
+        let thresh = new cv.Mat();
+        let contours = new cv.MatVector();
+        let hierarchy = new cv.Mat();
+
+        // Convertir en gris, flouter et binariser
+        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+        let ksize = new cv.Size(5, 5);
+        cv.GaussianBlur(gray, gray, ksize, 0, 0, cv.BORDER_DEFAULT);
+        cv.threshold(gray, thresh, 230, 255, cv.THRESH_BINARY_INV);
+
+        // Trouver les contours
+        cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+        let compteur = 0;
+        let resultatsDiv = document.getElementById('resultats');
+
+        // On parcourt les contours à l'envers (du haut vers le bas de la page)
+        for (let i = contours.size() - 1; i >= 0; --i) {
+            let cnt = contours.get(i);
+            let rect = cv.boundingRect(cnt);
+
+            // Filtrer les éléments trop petits (bulles, poussières)
+            if (rect.width > 150 && rect.height > 150) {
+                compteur++;
+
+                // Créer un mini canvas pour cette case spécifique
+                let canvasCase = document.createElement('canvas');
+                canvasCase.width = rect.width;
+                canvasCase.height = rect.height;
+                let ctxCase = canvasCase.getContext('2d');
+
+                // Découper la zone (crop) depuis le canvas d'origine
+                ctxCase.drawImage(canvas, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
+
+                // Convertir le canvas en image affichable et téléchargeable
+                let imgCase = new Image();
+                imgCase.src = canvasCase.toDataURL("image/png");
+                imgCase.className = "case-img";
+
+                // Ajouter un bouton pour la sauvegarder sur le téléphone
+                let conteneurCase = document.createElement('div');
+                conteneurCase.appendChild(imgCase);
+                
+                let btnSauvegarder = document.createElement('a');
+                btnSauvegarder.href = imgCase.src;
+                btnSauvegarder.download = `case_${compteur}.png`;
+                btnSauvegarder.innerText = `⬇️ Enregistrer la Case ${compteur}`;
+                btnSauvegarder.className = "btn";
+                btnSauvegarder.style.marginTop = "5px";
+                btnSauvegarder.style.backgroundColor = "#a6e3a1";
+
+                conteneurCase.appendChild(document.createElement('br'));
+                conteneurCase.appendChild(btnSauvegarder);
+                resultatsDiv.appendChild(conteneurCase);
+            }
+        }
+
+        document.getElementById('status').innerText = `🎉 Terminé ! ${compteur} cases trouvées.`;
+
+        // Nettoyage de la mémoire OpenCV
+        src.delete(); dst.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
+    }
+</script>
+
+</body>
+</html>
